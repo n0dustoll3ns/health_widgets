@@ -2,7 +2,7 @@ import 'dart:async';
 import 'package:collection/collection.dart';
 import 'package:flutter/foundation.dart';
 import 'package:health/health.dart';
-import 'package:health_widgets/domain.dart';
+import 'package:health_widgets/domain.dart'; // Убедитесь, что путь верный
 import 'package:home_widget/home_widget.dart';
 
 class SleepViewModel extends ChangeNotifier {
@@ -37,11 +37,17 @@ class SleepViewModel extends ChangeNotifier {
       return;
     }
 
-    final types = [HealthDataType.SLEEP_SESSION];
-    final permissions = [HealthDataAccess.READ];
+    // 1. Определяем типы данных
+    final types = [HealthDataType.SLEEP_DEEP, HealthDataType.SLEEP_LIGHT, HealthDataType.SLEEP_REM];
+
+    // 2. Исправление: Создаем список прав той же длины, что и список типов
+    // Для каждого типа мы запрашиваем право на чтение (READ)
+    final permissions = List.filled(types.length, HealthDataAccess.READ);
 
     try {
+      // Теперь длины списков совпадают (3 и 3)
       bool? hasPermissions = await _health.hasPermissions(types, permissions: permissions);
+
       if (hasPermissions == false) {
         bool requested = await _health.requestAuthorization(types, permissions: permissions);
         if (!requested) {
@@ -61,7 +67,7 @@ class SleepViewModel extends ChangeNotifier {
   Future<void> setSelectedDays(int days) async {
     if (_selectedDays == days) return;
     _selectedDays = days;
-    notifyListeners(); // Сразу обновляем UI (показываем лоадер или пустой список)
+    notifyListeners();
     await _fetchSleepData();
   }
 
@@ -73,17 +79,19 @@ class SleepViewModel extends ChangeNotifier {
 
     try {
       final now = DateTime.now();
-      // Начало диапазона: сегодня минус (выбрано дней - 1)
-      // Важно: берем начало дня
+      // Начало диапазона
       final startDate = DateTime(now.year, now.month, now.day).subtract(Duration(days: _selectedDays - 1));
 
+      // 2. Запрашиваем данные по всем типам фаз сразу
+      // Пакет health вернет список HealthDataPoint, где у каждого будет свой тип (SLEEP_DEEP, SLEEP_LIGHT и т.д.)
       List<HealthDataPoint> healthData = await _health.getHealthDataFromTypes(
-        types: [HealthDataType.SLEEP_SESSION],
+        types: [HealthDataType.SLEEP_DEEP, HealthDataType.SLEEP_LIGHT, HealthDataType.SLEEP_REM],
         startTime: startDate,
         endTime: now,
       );
 
-      // ГРУППИРОВКА
+      // ГРУППИРОВКА ПО ДНЯМ
+      // Группируем все точки (и глубокий, и легкий сон) по дате начала записи
       Map<DateTime, List<HealthDataPoint>> grouped = groupBy(healthData, (point) {
         return DateTime(point.dateFrom.year, point.dateFrom.month, point.dateFrom.day);
       });
@@ -94,22 +102,30 @@ class SleepViewModel extends ChangeNotifier {
         DateTime date = startDate.add(Duration(days: i));
         DateTime key = DateTime(date.year, date.month, date.day);
 
-        double dayDeep = 0, dayLight = 0, dayRem = 0;
+        double dayDeep = 0;
+        double dayLight = 0;
+        double dayRem = 0;
 
         if (grouped.containsKey(key)) {
-          for (var point in grouped[key]!) {
-            // Безопасное приведение типов
-            if (point.value is NumericHealthValue) {
-              double totalMinutes = (point.value as NumericHealthValue).numericValue.toDouble();
-              double totalHours = totalMinutes / 60;
+          var pointsForDay = grouped[key]!;
 
-              // Логика распределения фаз (как в исходном коде)
-              dayDeep += totalHours * 0.25;
-              dayLight += totalHours * 0.55;
-              dayRem += totalHours * 0.20;
+          for (var point in pointsForDay) {
+            if (point.value is NumericHealthValue) {
+              double minutes = (point.value as NumericHealthValue).numericValue.toDouble();
+              double hours = minutes / 60;
+
+              // 3. Распределяем данные в зависимости от ТИПА записи
+              if (point.type == HealthDataType.SLEEP_DEEP) {
+                dayDeep += hours;
+              } else if (point.type == HealthDataType.SLEEP_LIGHT) {
+                dayLight += hours;
+              } else if (point.type == HealthDataType.SLEEP_REM) {
+                dayRem += hours;
+              }
             }
           }
         }
+
         processedData.add(SleepDay(date: key, deep: dayDeep, light: dayLight, rem: dayRem));
       }
 
@@ -117,21 +133,18 @@ class SleepViewModel extends ChangeNotifier {
       _isLoading = false;
       notifyListeners();
 
-      // Если данные есть, инициируем обновление домашнего виджета
-      // Примечание: Сам скриншот делается в UI слое, но мы можем вызвать триггер
       if (_sleepData.isNotEmpty) {
-        // Мы не можем сделать скриншот здесь, так как нет доступа к RenderBox.
-        // View должен подписаться на изменения или вызвать метод обновления виджета после отрисовки.
+        // Триггер для обновления виджета, если нужно
       }
     } catch (e) {
       _error = "Failed to fetch data: $e";
       _isLoading = false;
       notifyListeners();
+      debugPrint("Error fetching sleep data: $e");
     }
   }
 
   /// Логика сохранения изображения и обновления Home Widget
-  /// Принимает путь к файлу изображения, созданному в UI слое
   Future<void> updateSystemWidget(String imagePath) async {
     try {
       await HomeWidget.saveWidgetData<String>('chart_path', imagePath);
