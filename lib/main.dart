@@ -5,12 +5,12 @@ import 'package:flutter/rendering.dart';
 import 'package:health/health.dart';
 import 'package:home_widget/home_widget.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:collection/collection.dart'; // Полезно для группировки
 
 void main() => runApp(const HealthWidgetsApp());
 
 class SleepDay {
   final DateTime date;
-
   final double deep;
   final double light;
   final double rem;
@@ -21,7 +21,8 @@ class SleepDay {
   final double total;
 
   @override
-  String toString() => '\nSleepDay $date: deep = $deep; light = $light; rem = $rem; ';
+  String toString() =>
+      '\nSleepDay ${date.day}.${date.month}: deep = ${deep.toStringAsFixed(2)}; total = ${total.toStringAsFixed(2)}';
 }
 
 class HealthWidgetsApp extends StatefulWidget {
@@ -33,6 +34,7 @@ class HealthWidgetsApp extends StatefulWidget {
 class _HealthWidgetsAppState extends State<HealthWidgetsApp> {
   final GlobalKey _boundaryKey = GlobalKey();
   List<SleepDay> _sleepData = [];
+  int _selectedDays = 7; // Состояние для выбора количества дней
 
   Future<void> authorizeHealth() async {
     Health health = Health();
@@ -59,7 +61,8 @@ class _HealthWidgetsAppState extends State<HealthWidgetsApp> {
     Health health = Health();
     await health.configure();
     var now = DateTime.now();
-    var range = now.subtract(const Duration(days: 7));
+    // Используем выбранное количество дней
+    var range = DateTime(now.year, now.month, now.day).subtract(Duration(days: _selectedDays - 1));
 
     List<HealthDataPoint> healthData = await health.getHealthDataFromTypes(
       types: [HealthDataType.SLEEP_SESSION],
@@ -67,20 +70,35 @@ class _HealthWidgetsAppState extends State<HealthWidgetsApp> {
       endTime: now,
     );
 
+    // ГРУППИРОВКА: Собираем данные по дням
+    Map<DateTime, List<HealthDataPoint>> grouped = groupBy(healthData, (point) {
+      return DateTime(point.dateFrom.year, point.dateFrom.month, point.dateFrom.day);
+    });
+
+    List<SleepDay> processedData = [];
+
+    // Проходим по каждой дате в выбранном интервале
+    for (int i = 0; i < _selectedDays; i++) {
+      DateTime date = range.add(Duration(days: i));
+      DateTime key = DateTime(date.year, date.month, date.day);
+
+      double dayDeep = 0, dayLight = 0, dayRem = 0;
+
+      if (grouped.containsKey(key)) {
+        for (var point in grouped[key]!) {
+          double totalHours = (point.value as NumericHealthValue).numericValue.toDouble() / 60;
+          // Распределяем фазы (как в вашем примере)
+          dayDeep += totalHours * 0.25;
+          dayLight += totalHours * 0.55;
+          dayRem += totalHours * 0.20;
+        }
+      }
+
+      processedData.add(SleepDay(date: key, deep: dayDeep, light: dayLight, rem: dayRem));
+    }
+
     setState(() {
-      _sleepData = healthData.map((e) {
-        double totalMinutes = (e.value as NumericHealthValue).numericValue.toDouble();
-        double totalHours = totalMinutes / 60;
-
-        if (totalHours <= 0) return SleepDay(date: e.dateFrom, deep: 0, light: 0, rem: 0);
-
-        return SleepDay(
-          date: e.dateFrom,
-          deep: totalHours * 0.25,
-          light: totalHours * 0.55,
-          rem: totalHours * 0.20,
-        );
-      }).toList();
+      _sleepData = processedData;
     });
 
     if (_sleepData.isNotEmpty) {
@@ -122,7 +140,30 @@ class _HealthWidgetsAppState extends State<HealthWidgetsApp> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text("Last 7 Days", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      "Last $_selectedDays Days",
+                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                    ),
+                    // Селект количества дней
+                    DropdownButton<int>(
+                      value: _selectedDays,
+                      underline: Container(),
+                      items: List.generate(
+                        7,
+                        (index) => index + 1,
+                      ).map((d) => DropdownMenuItem(value: d, child: Text("$d d"))).toList(),
+                      onChanged: (val) {
+                        if (val != null) {
+                          setState(() => _selectedDays = val);
+                          _fetchSleepData();
+                        }
+                      },
+                    ),
+                  ],
+                ),
                 const SizedBox(height: 16),
                 Card(
                   elevation: 0,
@@ -174,14 +215,22 @@ class MultiPhaseSleepPainter extends CustomPainter {
   final List<SleepDay> data;
   MultiPhaseSleepPainter(this.data);
 
+  // Вспомогательная функция для форматирования времени
+  String _formatHours(double hours) {
+    int h = hours.toInt();
+    int m = ((hours - h) * 60).round();
+    if (h == 0) return '${m}m';
+    return '${h}h ${m}m';
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
     if (data.isEmpty) return;
 
     double maxVal = data.map((e) => e.total).reduce((a, b) => a > b ? a : b);
-    if (maxVal <= 0) maxVal = 8.0; // Заглушка на 8 часов, если данных нет
+    if (maxVal < 8.0) maxVal = 8.0;
 
-    double spacing = 1.6;
+    double spacing = 1.6; // Немного увеличим отступ для читаемости текста
     double barWidth = size.width / (data.length * spacing);
 
     final paintDeep = Paint()..color = const Color(0xFF1A237E);
@@ -189,31 +238,114 @@ class MultiPhaseSleepPainter extends CustomPainter {
     final paintREM = Paint()..color = const Color(0xFF9FA8DA);
 
     for (int i = 0; i < data.length; i++) {
+      double x = i * barWidth * spacing + (barWidth * (spacing - 1) / 2);
       if (data[i].total <= 0) continue;
 
-      double x = i * barWidth * spacing;
-      double totalHeight = (data[i].total / maxVal) * size.height;
-
-      // Защита от деления на 0 для сегментов
-      double deepRatio = data[i].deep / data[i].total;
-      double lightRatio = data[i].light / data[i].total;
-      double remRatio = data[i].rem / data[i].total;
-
+      double totalHeight = (data[i].total / maxVal) * (size.height - 30); // Оставляем место сверху под текст
       double currentY = size.height;
 
-      // Deep
-      double hDeep = totalHeight * deepRatio;
-      canvas.drawRect(Rect.fromLTWH(x, currentY - hDeep, barWidth, hDeep), paintDeep);
+      // Рисуем сегменты
+      _drawSegment(
+        canvas,
+        x,
+        currentY,
+        barWidth,
+        totalHeight,
+        data[i].deep,
+        data[i].total,
+        paintDeep,
+        isBottom: true,
+      );
+      double hDeep = totalHeight * (data[i].deep / data[i].total);
       currentY -= hDeep;
 
-      // Light
-      double hLight = totalHeight * lightRatio;
-      canvas.drawRect(Rect.fromLTWH(x, currentY - hLight, barWidth, hLight), paintLight);
+      _drawSegment(canvas, x, currentY, barWidth, totalHeight, data[i].light, data[i].total, paintLight);
+      double hLight = totalHeight * (data[i].light / data[i].total);
       currentY -= hLight;
 
-      // REM
-      double hRem = totalHeight * remRatio;
-      canvas.drawRect(Rect.fromLTWH(x, currentY - hRem, barWidth, hRem), paintREM);
+      _drawSegment(
+        canvas,
+        x,
+        currentY,
+        barWidth,
+        totalHeight,
+        data[i].rem,
+        data[i].total,
+        paintREM,
+        isTop: true,
+      );
+
+      // --- ОТРИСОВКА ТЕКСТА (ИТОГО НАД СТОЛБИКОМ) ---
+      final textPainter = TextPainter(
+        text: TextSpan(
+          text: _formatHours(data[i].total),
+          style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout(minWidth: 0, maxWidth: barWidth + 10);
+
+      textPainter.paint(
+        canvas,
+        Offset(
+          x + (barWidth - textPainter.width) / 2,
+          currentY - (totalHeight * (data[i].rem / data[i].total)) - 18,
+        ),
+      );
+
+      // Рисуем дату под столбцом
+      final datePainter = TextPainter(
+        text: TextSpan(
+          text: "${data[i].date.day}/${data[i].date.month}",
+          style: const TextStyle(color: Colors.white54, fontSize: 9),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      datePainter.paint(canvas, Offset(x + (barWidth - datePainter.width) / 2, size.height + 5));
+    }
+  }
+
+  void _drawSegment(
+    Canvas canvas,
+    double x,
+    double y,
+    double width,
+    double totalHeight,
+    double phaseValue,
+    double totalValue,
+    Paint paint, {
+    bool isTop = false,
+    bool isBottom = false,
+  }) {
+    double h = totalHeight * (phaseValue / totalValue);
+    Rect rect = Rect.fromLTWH(x, y - h, width, h);
+
+    // Отрисовка фигуры
+    if (isTop || isBottom) {
+      canvas.drawRRect(
+        RRect.fromRectAndCorners(
+          rect,
+          topLeft: isTop ? const Radius.circular(4) : Radius.zero,
+          topRight: isTop ? const Radius.circular(4) : Radius.zero,
+          bottomLeft: isBottom ? const Radius.circular(4) : Radius.zero,
+          bottomRight: isBottom ? const Radius.circular(4) : Radius.zero,
+        ),
+        paint,
+      );
+    } else {
+      canvas.drawRect(rect, paint);
+    }
+
+    // Текст внутри сегмента (только если сегмент достаточно высокий)
+    if (h > 15) {
+      final tp = TextPainter(
+        text: TextSpan(
+          text: _formatHours(phaseValue),
+          style: TextStyle(color: isTop ? Colors.black87 : Colors.white, fontSize: 8),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout(maxWidth: width);
+
+      tp.paint(canvas, Offset(x + (width - tp.width) / 2, y - h + (h - tp.height) / 2));
     }
   }
 
