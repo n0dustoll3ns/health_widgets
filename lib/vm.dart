@@ -1,9 +1,17 @@
 import 'dart:async';
-import 'package:collection/collection.dart';
 import 'package:flutter/foundation.dart';
 import 'package:health/health.dart';
-import 'package:health_widgets/domain.dart'; // Убедитесь, что путь верный
+import 'package:health_widgets/domain.dart';
 import 'package:home_widget/home_widget.dart';
+
+// Вспомогательный класс для работы с интервалами внутри алгоритма
+class _SleepInterval {
+  DateTime start;
+  DateTime end;
+  HealthDataType type;
+
+  _SleepInterval({required this.start, required this.end, required this.type});
+}
 
 class SleepViewModel extends ChangeNotifier {
   SleepViewModel() {
@@ -37,15 +45,10 @@ class SleepViewModel extends ChangeNotifier {
       return;
     }
 
-    // 1. Определяем типы данных
     final types = [HealthDataType.SLEEP_DEEP, HealthDataType.SLEEP_LIGHT, HealthDataType.SLEEP_REM];
-
-    // 2. Исправление: Создаем список прав той же длины, что и список типов
-    // Для каждого типа мы запрашиваем право на чтение (READ)
     final permissions = List.filled(types.length, HealthDataAccess.READ);
 
     try {
-      // Теперь длины списков совпадают (3 и 3)
       bool? hasPermissions = await _health.hasPermissions(types, permissions: permissions);
 
       if (hasPermissions == false) {
@@ -79,69 +82,147 @@ class SleepViewModel extends ChangeNotifier {
 
     try {
       final now = DateTime.now();
-      // Начало диапазона
-      final startDate = DateTime(now.year, now.month, now.day).subtract(Duration(days: _selectedDays - 1));
+      // Берем запас по дням + 1 день, чтобы захватить ночи, которые начались вчера, но закончились сегодня
+      final startDate = DateTime(now.year, now.month, now.day).subtract(Duration(days: _selectedDays + 1));
 
-      // 2. Запрашиваем данные по всем типам фаз сразу
-      // Пакет health вернет список HealthDataPoint, где у каждого будет свой тип (SLEEP_DEEP, SLEEP_LIGHT и т.д.)
       List<HealthDataPoint> healthData = await _health.getHealthDataFromTypes(
         types: [HealthDataType.SLEEP_DEEP, HealthDataType.SLEEP_LIGHT, HealthDataType.SLEEP_REM],
         startTime: startDate,
         endTime: now,
       );
 
-      // ГРУППИРОВКА ПО ДНЯМ
-      // Группируем все точки (и глубокий, и легкий сон) по дате начала записи
-      Map<DateTime, List<HealthDataPoint>> grouped = groupBy(healthData, (point) {
-        return DateTime(point.dateFrom.year, point.dateFrom.month, point.dateFrom.day);
-      });
-
-      List<SleepDay> processedData = [];
-
-      for (int i = 0; i < _selectedDays; i++) {
-        DateTime date = startDate.add(Duration(days: i));
-        DateTime key = DateTime(date.year, date.month, date.day);
-
-        double dayDeep = 0;
-        double dayLight = 0;
-        double dayRem = 0;
-
-        if (grouped.containsKey(key)) {
-          var pointsForDay = grouped[key]!;
-
-          for (var point in pointsForDay) {
-            if (point.value is NumericHealthValue) {
-              double minutes = (point.value as NumericHealthValue).numericValue.toDouble();
-              double hours = minutes / 60;
-
-              // 3. Распределяем данные в зависимости от ТИПА записи
-              if (point.type == HealthDataType.SLEEP_DEEP) {
-                dayDeep += hours;
-              } else if (point.type == HealthDataType.SLEEP_LIGHT) {
-                dayLight += hours;
-              } else if (point.type == HealthDataType.SLEEP_REM) {
-                dayRem += hours;
-              }
-            }
+      // 1. Преобразуем HealthDataPoint в простые интервалы для сортировки
+      List<_SleepInterval> intervals = [];
+      for (var point in healthData) {
+        if (point.value is NumericHealthValue) {
+          // Проверяем, что длительность > 0, чтобы избежать ошибок
+          if ((point.value as NumericHealthValue).numericValue > 0) {
+            intervals.add(_SleepInterval(start: point.dateFrom, end: point.dateTo, type: point.type));
           }
         }
-
-        processedData.add(SleepDay(date: key, deep: dayDeep, light: dayLight, rem: dayRem));
       }
+
+      // 2. Сортируем интервалы по времени начала
+      intervals.sort((a, b) => a.start.compareTo(b.start));
+
+      // 3. ОБЪЕДИНЕНИЕ ПЕРЕСЕКАЮЩИХСЯ ИНТЕРВАЛОВ (MERGE OVERLAPS)
+      // Это ключевой шаг для удаления дубликатов от разных источников (Xiaomi, Google Fit и т.д.)
+      List<_SleepInterval> mergedIntervals = [];
+
+      for (var current in intervals) {
+        if (mergedIntervals.isEmpty) {
+          mergedIntervals.add(current);
+        } else {
+          var last = mergedIntervals.last;
+
+          // Если текущий интервал начинается раньше, чем заканчивается предыдущий
+          // ИЛИ они совпадают по границе
+          if (current.start.isBefore(last.end) || current.start.isAtSameMomentAs(last.end)) {
+            // Обновляем конец предыдущего интервала, если текущий заканчивается позже
+            if (current.end.isAfter(last.end)) {
+              last.end = current.end;
+            }
+            // Примечание: Если типы разные (например, Deep и Light перекрылись),
+            // мы все равно сливаем их геометрически, чтобы не считать одно время дважды.
+            // Тип оставляем от первого интервала или можно игнорировать тип при слиянии,
+            // но для простоты оставим тип последнего добавленного или первого.
+            // В данном случае тип не критичен для слияния геометрии, главное - время.
+          } else {
+            // Нет пересечения, добавляем новый интервал
+            mergedIntervals.add(current);
+          }
+        }
+      }
+
+      // 4. Распределение по дням
+      // Создаем карту для накопления часов: Key = Дата (День пробуждения/Основной день)
+      Map<String, Map<HealthDataType, double>> dailyStats = {};
+
+      // Инициализируем карту для последних N дней нулями
+      for (int i = 0; i < _selectedDays; i++) {
+        DateTime date = DateTime(now.year, now.month, now.day).subtract(Duration(days: i));
+        String key = _getDateKey(date);
+        dailyStats[key] = {
+          HealthDataType.SLEEP_DEEP: 0.0,
+          HealthDataType.SLEEP_LIGHT: 0.0,
+          HealthDataType.SLEEP_REM: 0.0,
+        };
+      }
+
+      for (var interval in mergedIntervals) {
+        // Определяем, какому дню принадлежит этот сон.
+        // Логика: Если сон начался до 12:00 дня, считаем его принадлежащим этому дню (утренний сон).
+        // Если сон начался после 12:00 дня (вечер), он принадлежит следующему дню (дню пробуждения).
+        // Это стандартная логика для трекеров сна.
+
+        DateTime targetDate = interval.start;
+        if (interval.start.hour >= 12) {
+          // Если начали спать в 22:00, это статистика для "завтрашнего" дня
+          targetDate = interval.start.add(Duration(days: 1));
+        }
+
+        // Проверяем, попадает ли целевая дата в наш диапазон отображения
+        String key = _getDateKey(targetDate);
+
+        if (dailyStats.containsKey(key)) {
+          double durationHours = interval.end.difference(interval.start).inMinutes / 60.0;
+
+          switch (interval.type) {
+            case HealthDataType.SLEEP_DEEP:
+              dailyStats[key]![HealthDataType.SLEEP_DEEP] =
+                  (dailyStats[key]![HealthDataType.SLEEP_DEEP] ?? 0) + durationHours;
+              break;
+            case HealthDataType.SLEEP_LIGHT:
+              dailyStats[key]![HealthDataType.SLEEP_LIGHT] =
+                  (dailyStats[key]![HealthDataType.SLEEP_LIGHT] ?? 0) + durationHours;
+              break;
+            case HealthDataType.SLEEP_REM:
+              dailyStats[key]![HealthDataType.SLEEP_REM] =
+                  (dailyStats[key]![HealthDataType.SLEEP_REM] ?? 0) + durationHours;
+              break;
+            default:
+              break;
+          }
+        }
+      }
+
+      // 5. Формируем итоговый список
+      List<SleepDay> processedData = [];
+      for (int i = 0; i < _selectedDays; i++) {
+        DateTime date = DateTime(now.year, now.month, now.day).subtract(Duration(days: i));
+        String key = _getDateKey(date);
+
+        var stats =
+            dailyStats[key] ??
+            {HealthDataType.SLEEP_DEEP: 0.0, HealthDataType.SLEEP_LIGHT: 0.0, HealthDataType.SLEEP_REM: 0.0};
+
+        processedData.add(
+          SleepDay(
+            date: date,
+            deep: stats[HealthDataType.SLEEP_DEEP] ?? 0.0,
+            light: stats[HealthDataType.SLEEP_LIGHT] ?? 0.0,
+            rem: stats[HealthDataType.SLEEP_REM] ?? 0.0,
+          ),
+        );
+      }
+
+      // Сортируем от старого к новому для графика (опционально, зависит от вашего UI)
+      processedData.sort((a, b) => a.date.compareTo(b.date));
 
       _sleepData = processedData;
       _isLoading = false;
       notifyListeners();
-
-      if (_sleepData.isNotEmpty) {
-        // Триггер для обновления виджета, если нужно
-      }
     } catch (e) {
       _error = "Failed to fetch data: $e";
       _isLoading = false;
       notifyListeners();
       debugPrint("Error fetching sleep data: $e");
     }
+  }
+
+  // Helper для создания унифицированного ключа даты (без времени)
+  String _getDateKey(DateTime date) {
+    return "${date.year}-${date.month}-${date.day}";
   }
 
   /// Логика сохранения изображения и обновления Home Widget
