@@ -60,9 +60,9 @@ class _HealthWidgetsAppState extends State<HealthWidgetsApp> {
   Future<void> _fetchSleepData() async {
     Health health = Health();
     await health.configure();
-    var now = DateTime.now();
+    final now = DateTime.now();
     // Используем выбранное количество дней
-    var range = DateTime(now.year, now.month, now.day).subtract(Duration(days: _selectedDays - 1));
+    final range = DateTime(now.year, now.month, now.day).subtract(Duration(days: _selectedDays - 1));
 
     List<HealthDataPoint> healthData = await health.getHealthDataFromTypes(
       types: [HealthDataType.SLEEP_SESSION],
@@ -86,6 +86,7 @@ class _HealthWidgetsAppState extends State<HealthWidgetsApp> {
 
       if (grouped.containsKey(key)) {
         for (var point in grouped[key]!) {
+          print('point = ${point}');
           double totalHours = (point.value as NumericHealthValue).numericValue.toDouble() / 60;
           // Распределяем фазы (как в вашем примере)
           dayDeep += totalHours * 0.25;
