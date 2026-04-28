@@ -3,9 +3,9 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:health_widgets/vm.dart';
-import 'package:health_widgets/widgets/legend_item.dart';
-import 'package:health_widgets/widgets/painter.dart';
+import 'package:health_widgets/ui/sleep/vm.dart';
+import 'package:health_widgets/ui/sleep/widgets/legend_item.dart';
+import 'package:health_widgets/ui/sleep/widgets/painter.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 
