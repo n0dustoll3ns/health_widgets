@@ -1,6 +1,6 @@
-package com.fominykh.sleepwidget
+package com.sandbox.healthwidgets
 
-import com.fominykh.sleepwidget.R
+import com.sandbox.healthwidgets.R
 import android.appwidget.AppWidgetManager
 import android.content.Context
 import android.graphics.BitmapFactory

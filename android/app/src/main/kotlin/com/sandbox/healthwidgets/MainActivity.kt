@@ -1,4 +1,4 @@
-package com.fominykh.sleepwidget
+package com.sandbox.healthwidgets
 
 import io.flutter.embedding.android.FlutterActivity
 

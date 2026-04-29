@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "com.fominykh.sleepwidget"
+    namespace = "com.sandbox.healthwidgets"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -20,7 +20,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.fominykh.sleepwidget"
+        applicationId = "com.sandbox.healthwidgets"
         minSdk = 26
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode

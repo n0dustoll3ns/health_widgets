@@ -1,13 +1,12 @@
-import 'dart:ui' as ui;
-import 'dart:io';
-
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
+import 'package:health_widgets/repo/health.dart';
+import 'package:health_widgets/ui/food/view.dart';
+import 'package:health_widgets/ui/food/vm.dart';
+import 'package:health_widgets/ui/sleep/view.dart';
 import 'package:health_widgets/ui/sleep/vm.dart';
-import 'package:health_widgets/ui/sleep/widgets/legend_item.dart';
-import 'package:health_widgets/ui/sleep/widgets/painter.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
+
+enum _AppNavigation { sleep, food }
 
 class AppView extends StatefulWidget {
   const AppView({super.key});
@@ -17,160 +16,47 @@ class AppView extends StatefulWidget {
 }
 
 class _AppViewState extends State<AppView> {
-  final GlobalKey _boundaryKey = GlobalKey();
-
-  /// Метод UI-слоя для создания скриншота и передачи пути во vm
-  Future<void> _captureAndUpdateWidget() async {
-    final context = _boundaryKey.currentContext;
-    if (context == null) return;
-
-    try {
-      // К этому моменту кадр уже отрисован благодаря addPostFrameCallback
-      RenderRepaintBoundary boundary = context.findRenderObject() as RenderRepaintBoundary;
-
-      ui.Image image = await boundary.toImage(pixelRatio: 2.0);
-      var byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-      if (byteData == null) return;
-
-      final tempDir = await getTemporaryDirectory();
-      final file = await File('${tempDir.path}/sleep_chart.png').create();
-      await file.writeAsBytes(byteData.buffer.asUint8List());
-
-      if (context.mounted) {
-        context.read<SleepViewModel>().updateSystemWidget(file.path);
-      }
-    } catch (e) {
-      debugPrint("Screenshot failed: $e");
-    }
-  }
+  final repo = HealthRepository();
+  _AppNavigation _navigation = _AppNavigation.food;
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (_) => SleepViewModel(),
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => SleepViewModel(repo)),
+        ChangeNotifierProvider(create: (_) => NutritionViewModel(repo)),
+      ],
 
       builder: (context, _) {
-        final vm = context.read<SleepViewModel>();
-        // Точечная подписка на статус загрузки для кнопки
-        final isLoading = context.select((SleepViewModel vm) => vm.isLoading);
-
-        // Точечная подписка на данные для графика
-        // Мы подписываемся на список, чтобы перерисовать график при изменении данных
-        final sleepData = context.select((SleepViewModel vm) => vm.sleepData);
-
-        // Подписка на выбранное количество дней для заголовка и дропдауна
-        final selectedDays = context.select((SleepViewModel vm) => vm.selectedDays);
-
-        // Подписка на ошибку
-        final error = context.select((SleepViewModel vm) => vm.error);
-
-        // Логика обновления виджета:
-        // Если данные есть и мы не загружаемся, планируем скриншот после отрисовки этого кадра.
-        // Это заменяет рекурсию и проверки debugNeedsPaint.
-        if (sleepData.isNotEmpty && !isLoading) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            _captureAndUpdateWidget();
-          });
-        }
-
         return Scaffold(
           appBar: AppBar(title: const Text('Sleep Analytics'), centerTitle: true),
+
           body: SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        "Last $selectedDays Days",
-                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                      ),
-                      // Селект количества дней
-                      DropdownButton<int>(
-                        value: selectedDays,
-                        underline: Container(),
-                        items: List.generate(
-                          7,
-                          (index) => index + 1,
-                        ).map((d) => DropdownMenuItem(value: d, child: Text("$d d"))).toList(),
-                        onChanged: (val) {
-                          if (val != null) {
-                            // Вызываем метод VM напрямую через read, так как это действие, а не состояние
-                            vm.setSelectedDays(val);
-                          }
-                        },
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Индикатор загрузки или График
-                  if (isLoading)
-                    const Expanded(child: Center(child: CircularProgressIndicator()))
-                  else
-                    Card(
-                      elevation: 0,
-                      color: Colors.grey[900],
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                      child: Padding(
-                        padding: const EdgeInsets.all(20.0),
-                        child: RepaintBoundary(
-                          key: _boundaryKey,
-                          child: Container(
-                            width: double.infinity,
-                            height: 250,
-                            color: Colors.transparent,
-                            child: CustomPaint(painter: MultiPhaseSleepPainter(sleepData)),
-                          ),
-                        ),
-                      ),
+            child: switch (_navigation) {
+              _AppNavigation.sleep => SleepView(),
+              _AppNavigation.food => NutitonView(),
+            },
+          ),
+          bottomNavigationBar: BottomNavigationBar(
+            items: _AppNavigation.values
+                .map(
+                  (e) => switch (_navigation) {
+                    _AppNavigation.sleep => BottomNavigationBarItem(
+                      icon: Icon(Icons.bed_outlined),
+                      label: 'Sleep',
                     ),
-
-                  const SizedBox(height: 24),
-                  const Wrap(
-                    spacing: 16,
-                    runSpacing: 8,
-                    children: [
-                      LegendItem(color: Color(0xFF1A237E), label: "Deep"),
-                      LegendItem(color: Color(0xFF3F51B5), label: "Light"),
-                      LegendItem(color: Color(0xFF9FA8DA), label: "REM"),
-                    ],
-                  ),
-                  const Spacer(),
-
-                  // Кнопка обновления
-                  SizedBox(
-                    width: double.infinity,
-                    height: 60,
-                    child: FilledButton.icon(
-                      // Блокируем кнопку при загрузке
-                      onPressed: isLoading ? null : () => vm.authorizeAndFetch(),
-                      icon: isLoading
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                            )
-                          : const Icon(Icons.refresh_rounded),
-                      label: Text(
-                        isLoading ? 'Syncing...' : 'Update & Sync',
-                        style: const TextStyle(fontSize: 16),
-                      ),
+                    // TODO: Handle this case.
+                    _AppNavigation.food => BottomNavigationBarItem(
+                      icon: Icon(Icons.fastfood_outlined),
+                      label: 'Nutrition',
                     ),
-                  ),
-
-                  // Вывод ошибки, если есть
-                  if (error != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8.0),
-                      child: Text(error, style: const TextStyle(color: Colors.redAccent)),
-                    ),
-                ],
-              ),
-            ),
+                  },
+                )
+                .toList(),
+            currentIndex: _AppNavigation.values.indexOf(_navigation),
+            selectedItemColor: Colors.blueAccent,
+            unselectedItemColor: Colors.blueGrey,
+            onTap: (i) => setState(() => _navigation = _AppNavigation.values.elementAt(i)),
           ),
         );
       },

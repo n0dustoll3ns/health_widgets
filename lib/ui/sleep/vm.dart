@@ -8,7 +8,7 @@ import 'package:home_widget/home_widget.dart';
 
 class SleepViewModel extends ChangeNotifier {
   // Внедряем зависимости (в реальном проекте лучше через DI, например get_it)
-  final HealthRepository _repository = HealthRepository();
+  final HealthRepository _repository ;
   final SleepAnalyzer _analyzer = SleepAnalyzer();
 
   List<SleepDay> _sleepData = [];
@@ -21,9 +21,9 @@ class SleepViewModel extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get error => _error;
 
-  SleepViewModel();
+  SleepViewModel(HealthRepository repository) : _repository = repository;
 
-  Future<void> authorizeAndFetch() async {
+  Future<void> authorizeAndFetchSleepData() async {
     final types = [HealthDataType.SLEEP_DEEP, HealthDataType.SLEEP_LIGHT, HealthDataType.SLEEP_REM];
 
     try {
