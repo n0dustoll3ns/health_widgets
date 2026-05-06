@@ -6,7 +6,7 @@ class _SleepInterval {
   DateTime start;
   DateTime end;
   HealthDataType type;
-  
+
   _SleepInterval({required this.start, required this.end, required this.type});
 }
 
@@ -19,13 +19,11 @@ class SleepAnalyzer {
   }) {
     // 1. Фильтрация и конвертация в интервалы
     List<_SleepInterval> intervals = rawPoints
-        .where((point) => point.value is NumericHealthValue && 
-                          (point.value as NumericHealthValue).numericValue > 0)
-        .map((point) => _SleepInterval(
-          start: point.dateFrom,
-          end: point.dateTo,
-          type: point.type,
-        ))
+        .where(
+          (point) =>
+              point.value is NumericHealthValue && (point.value as NumericHealthValue).numericValue > 0,
+        )
+        .map((point) => _SleepInterval(start: point.dateFrom, end: point.dateTo, type: point.type))
         .toList();
 
     // 2. Сортировка
@@ -40,7 +38,7 @@ class SleepAnalyzer {
 
   List<_SleepInterval> _mergeIntervals(List<_SleepInterval> intervals) {
     List<_SleepInterval> result = [];
-    
+
     for (var current in intervals) {
       if (result.isEmpty) {
         result.add(current);
@@ -48,7 +46,7 @@ class SleepAnalyzer {
       }
 
       var last = result.last;
-      
+
       // Если есть пересечение
       if (current.start.isBefore(last.end)) {
         // Логика "последний побеждает": обрезаем предыдущий
@@ -62,7 +60,7 @@ class SleepAnalyzer {
           // Current полностью перекрывает начало Last или начинается раньше
           // Удаляем Last, так как Current "новее" или важнее в этой точке
           result.removeLast();
-          // Важно: нужно проверить слияние с новым последним элементом, 
+          // Важно: нужно проверить слияние с новым последним элементом,
           // но для упрощения линейного прохода просто добавим current.
           // В идеале тут рекурсия или while, но для сна обычно хватает линейного прохода с сортировкой.
         }
@@ -98,21 +96,22 @@ class SleepAnalyzer {
       String key = _dateKey(targetDate);
       if (dailyStats.containsKey(key)) {
         double hours = interval.end.difference(interval.start).inMinutes / 60.0;
-        
+
         switch (interval.type) {
           case HealthDataType.SLEEP_DEEP:
-            dailyStats[key]![HealthDataType.SLEEP_DEEP] = 
+            dailyStats[key]![HealthDataType.SLEEP_DEEP] =
                 (dailyStats[key]![HealthDataType.SLEEP_DEEP] ?? 0) + hours;
             break;
           case HealthDataType.SLEEP_LIGHT:
-            dailyStats[key]![HealthDataType.SLEEP_LIGHT] = 
+            dailyStats[key]![HealthDataType.SLEEP_LIGHT] =
                 (dailyStats[key]![HealthDataType.SLEEP_LIGHT] ?? 0) + hours;
             break;
           case HealthDataType.SLEEP_REM:
-            dailyStats[key]![HealthDataType.SLEEP_REM] = 
+            dailyStats[key]![HealthDataType.SLEEP_REM] =
                 (dailyStats[key]![HealthDataType.SLEEP_REM] ?? 0) + hours;
             break;
-          default: break;
+          default:
+            break;
         }
       }
     }
@@ -123,15 +122,17 @@ class SleepAnalyzer {
       DateTime date = DateTime(now.year, now.month, now.day).subtract(Duration(days: i));
       String key = _dateKey(date);
       var stats = dailyStats[key]!;
-      
-      result.add(SleepDay(
-        date: date,
-        deep: stats[HealthDataType.SLEEP_DEEP] ?? 0.0,
-        light: stats[HealthDataType.SLEEP_LIGHT] ?? 0.0,
-        rem: stats[HealthDataType.SLEEP_REM] ?? 0.0,
-      ));
+
+      result.add(
+        SleepDay(
+          date: date,
+          deep: stats[HealthDataType.SLEEP_DEEP] ?? 0.0,
+          light: stats[HealthDataType.SLEEP_LIGHT] ?? 0.0,
+          rem: stats[HealthDataType.SLEEP_REM] ?? 0.0,
+        ),
+      );
     }
-    
+
     result.sort((a, b) => a.date.compareTo(b.date));
     return result;
   }
