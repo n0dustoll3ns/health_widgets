@@ -3,8 +3,9 @@ import 'package:health_widgets/domain/weight.dart';
 
 class WeightPainter extends CustomPainter {
   final List<WeightDay> data;
+  final List<WeightDay> emaData;
 
-  WeightPainter(this.data);
+  WeightPainter(this.data, this.emaData);
 
   // Форматирование даты dd.mm
   String _formatDate(DateTime date) {
@@ -115,8 +116,29 @@ class WeightPainter extends CustomPainter {
     // Рисуем заливку
     canvas.drawPath(fillPath, fillPaint);
 
-    // Рисуем линию
+    // Рисуем линию основного графика
     canvas.drawPath(graphPath, linePaint);
+
+    // Рисуем линию тренда EMA
+    if (emaData.isNotEmpty) {
+      final emaPaint = Paint()
+        ..color = const Color(0xFFFF9800) // Оранжевый цвет для EMA
+        ..strokeWidth = 2
+        ..style = PaintingStyle.stroke;
+
+      final emaPath = Path();
+      for (int i = 0; i < emaData.length; i++) {
+        double x = i * pointSpacing * spacing + (pointSpacing * (spacing - 1) / 2) + pointSpacing / 2;
+        double y = size.height - 20 - ((emaData[i].weight - minWeight) / (maxWeight - minWeight)) * chartHeight;
+
+        if (i == 0) {
+          emaPath.moveTo(x, y);
+        } else {
+          emaPath.lineTo(x, y);
+        }
+      }
+      canvas.drawPath(emaPath, emaPaint);
+    }
 
     // Рисуем точки и подписи
     for (int i = 0; i < data.length; i++) {
@@ -165,5 +187,6 @@ class WeightPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant WeightPainter oldDelegate) => oldDelegate.data != data;
+  bool shouldRepaint(covariant WeightPainter oldDelegate) => 
+    oldDelegate.data != data || oldDelegate.emaData != emaData;
 }

@@ -9,17 +9,21 @@ class WeightViewModel extends ChangeNotifier {
   final HealthRepository repository;
 
   List<WeightDay> _weightData = [];
+  List<WeightDay> _emaData = []; // Данные для линии тренда EMA
   int _selectedDays = 7;
   bool _isLoading = false;
   String? _error;
   double? _averageWeight;
+  double? _weightDynamicsPercent; // Динамика веса в процентах за 7 дней
 
   // Геттеры
   List<WeightDay> get weightData => _weightData;
+  List<WeightDay> get emaData => _emaData;
   int get selectedDays => _selectedDays;
   bool get isLoading => _isLoading;
   String? get error => _error;
   double? get averageWeight => _averageWeight;
+  double? get weightDynamicsPercent => _weightDynamicsPercent;
 
   WeightViewModel(this.repository);
 
@@ -47,6 +51,58 @@ class WeightViewModel extends ChangeNotifier {
     await _fetchAndProcess();
   }
 
+  /// Вычисление EMA (Exponential Moving Average) для линии тренда
+  List<WeightDay> _calculateEMA(List<WeightDay> data, int period) {
+    if (data.isEmpty) return [];
+    
+    final result = <WeightDay>[];
+    final multiplier = 2 / (period + 1);
+    
+    // Первое значение EMA - это просто первое значение веса
+    double ema = data.first.weight;
+    result.add(WeightDay(date: data.first.date, weight: ema));
+    
+    // Вычисляем EMA для остальных точек
+    for (int i = 1; i < data.length; i++) {
+      ema = (data[i].weight - ema) * multiplier + ema;
+      result.add(WeightDay(date: data[i].date, weight: ema));
+    }
+    
+    return result;
+  }
+
+  /// Вычисление динамики веса в процентах за указанное количество дней
+  double? _calculateWeightDynamics(List<WeightDay> data, int days) {
+    if (data.length < 2) return null;
+    
+    // Берём последнее измерение
+    final currentWeight = data.last.weight;
+    
+    // Ищем измерение, которое было примерно `days` дней назад
+    final targetDate = data.last.date.subtract(Duration(days: days));
+    
+    // Находим ближайшее измерение к целевой дате
+    WeightDay? pastDay;
+    for (var day in data.reversed) {
+      if (day.date.isBefore(targetDate) || day.date.isAtSameMomentAs(targetDate)) {
+        pastDay = day;
+        break;
+      }
+    }
+    
+    // Если не нашли прошлое измерение, берём первое доступное
+    if (pastDay == null) {
+      if (data.length < 2) return null;
+      pastDay = data.first;
+    }
+    
+    // Считаем процентное изменение: ((текущий - прошлый) / прошлый) * 100
+    final pastWeight = pastDay.weight;
+    if (pastWeight == 0) return null;
+    
+    return ((currentWeight - pastWeight) / pastWeight) * 100;
+  }
+
   /// Основная логика загрузки и обработки
   Future<void> _fetchAndProcess() async {
     _isLoading = true;
@@ -69,12 +125,27 @@ class WeightViewModel extends ChangeNotifier {
         now: now,
       );
 
+      // Вычисляем EMA для линии тренда
+      // Период EMA зависит от количества дней: для 14 дней - период 5, для 30 дней - период 10, иначе - период 3
+      int emaPeriod;
+      if (_selectedDays >= 30) {
+        emaPeriod = 10;
+      } else if (_selectedDays >= 14) {
+        emaPeriod = 5;
+      } else {
+        emaPeriod = 3;
+      }
+      _emaData = _calculateEMA(_weightData, emaPeriod);
+
       // Вычисляем средний вес
       if (_weightData.isNotEmpty) {
         _averageWeight = _weightData.map((e) => e.weight).reduce((a, b) => a + b) / _weightData.length;
       } else {
         _averageWeight = null;
       }
+
+      // Вычисляем динамику веса в процентах за 7 дней
+      _weightDynamicsPercent = _calculateWeightDynamics(_weightData, 7);
 
       _isLoading = false;
       notifyListeners();

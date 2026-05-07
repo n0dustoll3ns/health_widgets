@@ -51,12 +51,16 @@ class _WeightViewState extends State<WeightView> {
 
     // Точечная подписка на данные для графика
     final data = context.select((WeightViewModel vm) => vm.weightData);
+    final emaLineData = context.select((WeightViewModel vm) => vm.emaData);
 
     // Подписка на выбранное количество дней для заголовка и дропдауна
     final selectedDays = context.select((WeightViewModel vm) => vm.selectedDays);
 
     // Подписка на средний вес
     final averageWeight = context.select((WeightViewModel vm) => vm.averageWeight);
+
+    // Подписка на динамику веса в процентах
+    final weightDynamicsPercent = context.select((WeightViewModel vm) => vm.weightDynamicsPercent);
 
     // Подписка на ошибку
     final error = context.select((WeightViewModel vm) => vm.error);
@@ -85,10 +89,11 @@ class _WeightViewState extends State<WeightView> {
               DropdownButton<int>(
                 value: selectedDays,
                 underline: Container(),
-                items: List.generate(
-                  7,
-                  (index) => index + 1,
-                ).map((d) => DropdownMenuItem(value: d, child: Text("$d d"))).toList(),
+                items: [
+                  const DropdownMenuItem(value: 7, child: Text("7 d")),
+                  const DropdownMenuItem(value: 14, child: Text("14 d")),
+                  const DropdownMenuItem(value: 30, child: Text("1 month")),
+                ],
                 onChanged: (val) {
                   if (val != null) {
                     vm.setSelectedDays(val);
@@ -115,7 +120,7 @@ class _WeightViewState extends State<WeightView> {
                     width: double.infinity,
                     height: 250,
                     color: Colors.transparent,
-                    child: CustomPaint(painter: WeightPainter(data)),
+                    child: CustomPaint(painter: WeightPainter(data, emaLineData)),
                   ),
                 ),
               ),
@@ -123,27 +128,75 @@ class _WeightViewState extends State<WeightView> {
 
           const SizedBox(height: 24),
           
-          // Отображение среднего веса
-          if (averageWeight != null)
-            Card(
-              elevation: 0,
-              color: Colors.grey[900],
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.monitor_weight_outlined, color: Colors.greenAccent),
-                    const SizedBox(width: 12),
-                    Text(
-                      'Average: ${averageWeight.toStringAsFixed(1)} kg',
-                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+          // Отображение среднего веса и динамики в одном ряду
+          Row(
+            children: [
+              // Карточка среднего веса
+              Expanded(
+                child: Card(
+                  elevation: 0,
+                  color: Colors.grey[900],
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.monitor_weight_outlined, color: Colors.greenAccent),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Avg: ${averageWeight != null ? averageWeight.toStringAsFixed(1) : '--'} kg',
+                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                        ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
               ),
-            ),
+              const SizedBox(width: 12),
+              // Карточка динамики веса
+              Expanded(
+                child: Card(
+                  elevation: 0,
+                  color: Colors.grey[900],
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          weightDynamicsPercent == null
+                              ? Icons.remove_circle_outline
+                              : (weightDynamicsPercent >= 0 ? Icons.trending_up : Icons.trending_down),
+                          color: weightDynamicsPercent == null
+                              ? Colors.grey
+                              : (weightDynamicsPercent >= 0 ? Colors.redAccent : Colors.greenAccent),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          weightDynamicsPercent == null
+                              ? '-- %'
+                              : '${weightDynamicsPercent >= 0 ? '+' : ''}${weightDynamicsPercent.toStringAsFixed(1)}%',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: weightDynamicsPercent == null
+                                ? Colors.grey
+                                : (weightDynamicsPercent >= 0 ? Colors.redAccent : Colors.greenAccent),
+                          ),
+                        ),
+                        const Text(
+                          '7 days',
+                          style: TextStyle(fontSize: 10, color: Colors.white54),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
 
           const Spacer(),
 
